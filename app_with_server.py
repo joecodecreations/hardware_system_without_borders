@@ -15,6 +15,13 @@ import tkinter as tk
 import threading
 from flask import Flask, request, jsonify
 
+import json
+
+# Global variables to store recording data
+is_recording = False
+mouse_events = []
+
+
 
 device_width= 2560
 device_height= 1440
@@ -682,11 +689,74 @@ def on_right_release():
     ser.write(f"C,4\n".encode())
     if log_key_presses:
         print("Right mouse button released")
+       
+@app.route('/start-recording', methods=['POST'])
+def start_recording():
+    global is_recording, mouse_events
+    try:
+        mouse_events = []  # Clear previous recordings
+        is_recording = True
+        return jsonify({"status": "success", "message": "Recording started"}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/stop-recording', methods=['POST'])
+def stop_recording():
+    global is_recording
+    try:
+        is_recording = False
+        # Optionally, save recording data to file for persistence
+        return jsonify({"status": "success", "message": "Recording stopped", "events": len(mouse_events)}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/playback', methods=['POST'])
+def playback():
+    try:
+        for event in mouse_events:
+            x, y, button, action, delay = event
+            time.sleep(delay)  # Wait for the time between events
+
+            # Simulate mouse movement and clicks
+            mouse.move(x, y)
+            if button == "left" and action == "down":
+                mouse.press(button="left")
+            elif button == "left" and action == "up":
+                mouse.release(button="left")
+            elif button == "right" and action == "down":
+                mouse.press(button="right")
+            elif button == "right" and action == "up":
+                mouse.release(button="right")
+
+        return jsonify({"status": "success", "message": "Playback completed"}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# Hook into mouse events for recording
+def handle_mouse_record(event):
+    global is_recording, mouse_events
+    if is_recording and isinstance(event, mouse.ButtonEvent):
+        x, y = mouse.get_position()
+        timestamp = time.time()
         
+        if mouse_events:
+            # Calculate time difference between this and the last event
+            delay = timestamp - mouse_events[-1][-1]
+        else:
+            delay = 0  # No delay for the first event
+
+        # Record the event with position, button, action, and timestamp
+        mouse_events.append((x, y, event.button, event.event_type, delay))
+
+# Hook the function to mouse events only during recording
+mouse.hook(handle_mouse_record) 
+# Modify the main loop to include the new routes
 def main():
     global ser, tk, microprocessor_port, host_system, target_system, isSpecialKeyPressed, special_keys_pressed, special_keys, keyboard_wait, off_system, last_keys_pressed, log_mouse_movement, log_key_presses, log_operational_messages, log_microcontroller_messages
-    global mlc_sent, mrc_sent, mlcr_sent, mrcr_sent  # Declare these as global to modify them inside the functions
-
+    global mlc_sent, mrc_sent, mlcr_sent, mrcr_sent, is_recording, mouse_events  # Declare these as global to modify them inside the functions
 
     microprocessor_port = find_microprocessor_port()
 
@@ -695,20 +765,20 @@ def main():
     if microprocessor_port is None:
         print("Microcontroller not found. Please check the connection.")
         return
-    else :
+    else:
         if log_microcontroller_messages:
             print(f"Connected to microcontroller on {microprocessor_port}")
-        
+
     try:
-
         hide_icon()  # Start with the icon hidden
-
-        mouse.hook(handleMouseClick)
 
         # Start the Flask server in a new thread
         flask_thread = threading.Thread(target=start_flask)
         flask_thread.daemon = True  # Ensures the thread will close when the main program exits
         flask_thread.start()
+
+        # Start mouse event handling for switching systems
+        mouse.hook(handleMouseClick)
 
         while True:
             check_position()
@@ -717,6 +787,7 @@ def main():
     except Exception as e:
         print(f"Error occurred during setup: {e}")
         pass
+
 
 
 if __name__ == "__main__":
